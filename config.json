@@ -1,0 +1,44 @@
+{
+  "threshold_gbp": 80,
+  "volume": 80,
+  "alarm_repeat": 6,
+  "alarm_sound": "/System/Library/Sounds/Sosumi.aiff",
+  "open_browser_on_first_hit": false,
+  "realert_after_min": 60,
+  "notify": {
+    "mac_alarm": false,
+    "callmebot": {
+      "enabled": true,
+      "phone": "",
+      "apikey": ""
+    }
+  },
+  "dense_windows": [],
+  "default_interval_min": 0,
+  "routes": [
+    {
+      "name": "London to Paris 8/25",
+      "origin": "7015400",
+      "destination": "8727100",
+      "outbound": "2026-08-25",
+      "window_pref": "any",
+      "speak": "London to Paris, twenty fifth of August"
+    },
+    {
+      "name": "London to Paris 8/26",
+      "origin": "7015400",
+      "destination": "8727100",
+      "outbound": "2026-08-26",
+      "window_pref": "any",
+      "speak": "London to Paris, twenty sixth of August"
+    },
+    {
+      "name": "Paris to London 8/28 (afternoon pref)",
+      "origin": "8727100",
+      "destination": "7015400",
+      "outbound": "2026-08-28",
+      "window_pref": "afternoon",
+      "speak": "Paris to London, twenty eighth of August, afternoon"
+    }
+  ]
+}
