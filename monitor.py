@@ -138,6 +138,44 @@ def mac_alert(cfg, route, price, url, first_hit):
         sh(f"open {json.dumps(url)}")
 
 
+def digest():
+    """Check every route once and send a single summary message.
+
+    Doubles as a heartbeat: if this stops arriving, something in the chain
+    (the schedule, the scraper, or CallMeBot) has broken silently.
+    """
+    cfg = load_json(CONFIG, None)
+    if not cfg:
+        log("ERROR: config.json missing/invalid"); return
+    threshold = cfg["threshold_gbp"]
+    lines = []
+
+    async def run():
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            for route in cfg["routes"]:
+                res = await check_route(browser, route)
+                if res["error"]:
+                    lines.append(f"{route['name']}: check failed")
+                    log(f"{route['name']}: ERROR {res['error']}")
+                    continue
+                price = res["price"]
+                if price is None:
+                    lines.append(f"{route['name']}: no tickets yet")
+                elif price <= threshold:
+                    lines.append(f"{route['name']}: GBP {price:g} - UNDER THRESHOLD")
+                else:
+                    lines.append(f"{route['name']}: GBP {price:g} (above {threshold})")
+                log(f"digest: {lines[-1]}")
+            await browser.close()
+
+    asyncio.run(run())
+    today = datetime.date.today().strftime("%-d %b")
+    notify_whatsapp(cfg, "\U0001f68a Snap watcher daily check - " + today + "\n"
+                    + "\n".join(lines)
+                    + f"\n\nAlerts fire at or below GBP {threshold}. Checking every 10 min.")
+
+
 def alert(cfg, route, price, url, first_hit):
     """Fire every enabled notification channel for a qualifying price."""
     notify_whatsapp(cfg, (
@@ -237,5 +275,7 @@ if __name__ == "__main__":
         cfg = load_json(CONFIG, {}) or {}
         notify_whatsapp(cfg, "✅ Snap watcher test message. If you see this, "
                              "WhatsApp alerts are working.")
+    elif "--digest" in sys.argv:
+        digest()
     else:
         main()
