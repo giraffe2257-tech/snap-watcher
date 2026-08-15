@@ -17,14 +17,6 @@
   "default_interval_min": 0,
   "routes": [
     {
-      "name": "TEMP END-TO-END TEST - Paris to London 8/20",
-      "origin": "8727100",
-      "destination": "7015400",
-      "outbound": "2026-08-20",
-      "window_pref": "any",
-      "speak": "test"
-    },
-    {
       "name": "London to Paris 8/25",
       "origin": "7015400",
       "destination": "8727100",
