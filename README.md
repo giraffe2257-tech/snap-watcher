@@ -32,12 +32,23 @@ Brussels Midi `8814001`, Amsterdam Centraal `8400058`.
 
 ## Running it
 
-The workflow runs every 10 minutes. Trigger it by hand from the Actions tab
-("Snap watcher" → Run workflow) to test. Each run uploads `monitor.log` as an
-artifact.
+Two workflows:
+
+| Workflow | Schedule | What it sends |
+|---|---|---|
+| Snap watcher | every 10 min | WhatsApp alert only when a fare is at or below the threshold |
+| Daily digest | 07:07 UTC (08:07 London during BST) | One summary of all routes, every day |
+
+The digest is also the heartbeat: if it stops arriving, the schedule, the scraper,
+or CallMeBot has broken silently. Note the cron is UTC, so the London delivery time
+shifts by an hour when BST ends in late October.
+
+Trigger either by hand from the Actions tab → Run workflow. Watcher runs upload
+`monitor.log` as an artifact.
 
 Locally: `SNAP_FORCE_CHECK=1 CALLMEBOT_PHONE=... CALLMEBOT_APIKEY=... python monitor.py`
 Test the notification path only: `python monitor.py --test-notify`
+Send a digest on demand: `python monitor.py --digest`
 
 ## Limitations
 
