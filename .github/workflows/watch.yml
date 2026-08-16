@@ -2,8 +2,8 @@ name: Snap watcher
 
 on:
   schedule:
-    # Every 10 minutes (UTC). GitHub may delay scheduled runs under load.
-    - cron: "*/10 * * * *"
+    # Every 30 minutes (UTC). GitHub may delay scheduled runs under load.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
