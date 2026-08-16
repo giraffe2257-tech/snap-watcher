@@ -25,7 +25,14 @@ Everything lives in `config.json`:
 |---|---|
 | `threshold_gbp` | Alert when the day's lowest fare is at or below this |
 | `realert_after_min` | Wait this long before repeating an alert for an unchanged price |
-| `routes[]` | One entry per route+date to watch |
+| `routes[]` | One entry per route to watch |
+
+A route takes either a single `outbound` date or an `outbound_from` / `outbound_to`
+span. A span is not one page load per day: the Snap page renders a strip of
+neighbouring dates with their prices, so the watcher re-anchors the calendar at the
+first date it has not seen yet and covers a month in a handful of loads. When a load
+turns up no new in-range date, Snap is not selling that far ahead yet and the route
+stops there.
 
 Station codes: London St Pancras `7015400`, Paris Gare du Nord `8727100`,
 Brussels Midi `8814001`, Amsterdam Centraal `8400058`.
@@ -36,12 +43,23 @@ Two workflows:
 
 | Workflow | Schedule | What it sends |
 |---|---|---|
-| Snap watcher | every 10 min | WhatsApp alert only when a fare is at or below the threshold |
-| Daily digest | 07:07 UTC (08:07 London during BST) | One summary of all routes, every day |
+| Snap watcher | every 30 min | WhatsApp alert only when a fare is at or below the threshold |
+| Daily digest | off, manual only | One summary of all routes |
 
-The digest is also the heartbeat: if it stops arriving, the schedule, the scraper,
-or CallMeBot has broken silently. Note the cron is UTC, so the London delivery time
-shifts by an hour when BST ends in late October.
+Alerts are batched: one message per run listing every qualifying date, not one
+message per date. A month-long span can qualify on many dates at once, and
+per-date messages would flood WhatsApp and trip CallMeBot's rate limit.
+
+The daily digest used to double as a heartbeat and is off by request, so nothing
+arrives when there is no deal. To confirm the chain is still alive, run Daily
+digest by hand from the Actions tab, or uncomment its cron in
+`.github/workflows/digest.yml`.
+
+Two kill switches, in increasing order of bluntness: set
+`notify.callmebot.enabled` to `false` to keep scraping but stop the messages, or
+`gh workflow disable "Snap watcher"` to stop the scheduled runs entirely
+(`gh workflow enable` to undo). Commenting out the cron works too but only takes
+effect once pushed.
 
 Trigger either by hand from the Actions tab → Run workflow. Watcher runs upload
 `monitor.log` as an artifact.

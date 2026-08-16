@@ -37,9 +37,39 @@ def load_json(path, default):
         return default
 
 
-def full_date(iso):
-    d = datetime.date.fromisoformat(iso)
-    return f"{d.day} {d.strftime('%B')}"
+MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def parse_day_label(label, anchor):
+    """'Friday 4 September' -> date(2026, 9, 4). Year taken from `anchor`."""
+    m = re.search(r"(\d{1,2})\s+([A-Za-z]+)", label or "")
+    if not m:
+        return None
+    mon = MONTHS.get(m.group(2)[:3].lower())
+    if not mon:
+        return None
+    year = anchor.year + (1 if mon < anchor.month else 0)
+    try:
+        return datetime.date(year, mon, int(m.group(1)))
+    except ValueError:
+        return None
+
+
+def route_url(route, iso):
+    return (f"{BASE}?adult=1&origin={route['origin']}"
+            f"&destination={route['destination']}&outbound={iso}")
+
+
+def route_span(route):
+    """Routes take either a single `outbound` or an `outbound_from`/`_to` range."""
+    if route.get("outbound_from"):
+        start = datetime.date.fromisoformat(route["outbound_from"])
+        end = datetime.date.fromisoformat(route.get("outbound_to") or route["outbound_from"])
+    else:
+        start = end = datetime.date.fromisoformat(route["outbound"])
+    return start, end
 
 
 async def extract_days(page):
@@ -57,10 +87,13 @@ async def extract_days(page):
     }""")
 
 
-async def check_route(browser, route):
-    """Return dict: {price: float|None, raw: str, error: str|None}."""
-    url = (f"{BASE}?adult=1&origin={route['origin']}"
-           f"&destination={route['destination']}&outbound={route['outbound']}")
+async def load_calendar(browser, route, anchor):
+    """Open the Snap page anchored on one date. Returns (days, error, url).
+
+    The page renders a strip of neighbouring dates with their prices, so a
+    single load covers several days of a range.
+    """
+    url = route_url(route, anchor.isoformat())
     ctx = await browser.new_context(locale="en-GB", viewport={"width": 1280, "height": 900}, user_agent=UA)
     page = await ctx.new_page()
     try:
@@ -76,15 +109,46 @@ async def check_route(browser, route):
             if days and any(d["raw"] for d in days):
                 break
             await page.wait_for_timeout(1000)
-        want = full_date(route["outbound"]).lower()
-        hit = next((d for d in days if want in d["date"].lower()), None)
-        if hit is None:
-            return {"price": None, "raw": "(date not shown / not on sale)", "error": None, "url": url}
-        return {"price": hit["price"], "raw": hit["raw"] or "-", "error": None, "url": url}
+        return days, None, url
     except Exception as e:
-        return {"price": None, "raw": None, "error": str(e)[:200], "url": url}
+        return [], str(e)[:200], url
     finally:
         await ctx.close()
+
+
+async def check_route(browser, route):
+    """Return one result dict per on-sale date in the route's span.
+
+    Keeps re-anchoring the calendar at the first date it has not seen yet, so a
+    month-long span costs a handful of page loads rather than one per day. A
+    load that turns up no new in-range date means Snap is not selling that far
+    ahead yet, so we stop there.
+    """
+    start, end = route_span(route)
+    found, anchor = {}, start
+    while anchor <= end:
+        days, err, url = await load_calendar(browser, route, anchor)
+        if err:
+            return [{"date": None, "name": route["name"], "price": None,
+                     "raw": None, "error": err, "url": url}]
+        new = 0
+        for d in days:
+            dt = parse_day_label(d["date"], anchor)
+            if dt and start <= dt <= end and dt.isoformat() not in found:
+                found[dt.isoformat()] = d
+                new += 1
+        if not new:
+            break
+        while anchor <= end and anchor.isoformat() in found:
+            anchor += datetime.timedelta(days=1)
+    out = []
+    for iso in sorted(found):
+        d = found[iso]
+        label = datetime.date.fromisoformat(iso).strftime("%a %-d %b")
+        out.append({"date": iso, "name": f"{route['name']} {label}",
+                    "price": d["price"], "raw": d["raw"] or "-",
+                    "error": None, "url": route_url(route, iso)})
+    return out
 
 
 # ---------- WhatsApp push (CallMeBot) ----------
@@ -154,38 +218,62 @@ def digest():
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             for route in cfg["routes"]:
-                res = await check_route(browser, route)
-                if res["error"]:
-                    lines.append(f"{route['name']}: check failed")
-                    log(f"{route['name']}: ERROR {res['error']}")
-                    continue
-                price = res["price"]
-                if price is None:
-                    lines.append(f"{route['name']}: no tickets yet")
-                elif price <= threshold:
-                    lines.append(f"{route['name']}: GBP {price:g} - UNDER THRESHOLD")
-                else:
-                    lines.append(f"{route['name']}: GBP {price:g} (above {threshold})")
-                log(f"digest: {lines[-1]}")
+                results = await check_route(browser, route)
+                if not results:
+                    lines.append(f"{route['name']}: nothing on sale in range yet")
+                    log(f"digest: {lines[-1]}")
+                under = [r for r in results
+                         if r["price"] is not None and r["price"] <= threshold]
+                for res in results:
+                    if res["error"]:
+                        lines.append(f"{res['name']}: check failed")
+                        log(f"{res['name']}: ERROR {res['error']}")
+                if under:
+                    cheap = min(under, key=lambda r: r["price"])
+                    lines.append(f"{route['name']}: {len(under)} date(s) at or below "
+                                 f"GBP {threshold}, cheapest {cheap['name']} "
+                                 f"GBP {cheap['price']:g}")
+                    log(f"digest: {lines[-1]}")
+                elif results:
+                    priced = [r for r in results if r["price"] is not None]
+                    if priced:
+                        cheap = min(priced, key=lambda r: r["price"])
+                        lines.append(f"{route['name']}: nothing under GBP {threshold}, "
+                                     f"cheapest {cheap['name']} GBP {cheap['price']:g}")
+                    else:
+                        lines.append(f"{route['name']}: on sale but no prices shown")
+                    log(f"digest: {lines[-1]}")
             await browser.close()
 
     asyncio.run(run())
     today = datetime.date.today().strftime("%-d %b")
     notify_whatsapp(cfg, "\U0001f68a Snap watcher daily check - " + today + "\n"
                     + "\n".join(lines)
-                    + f"\n\nAlerts fire at or below GBP {threshold}. Checking every 10 min.")
+                    + f"\n\nAlerts fire at or below GBP {threshold}. Checking every 30 min.")
 
 
-def alert(cfg, route, price, url, first_hit):
-    """Fire every enabled notification channel for a qualifying price."""
+def alert(cfg, hits):
+    """Fire every enabled channel once for all qualifying dates in this run.
+
+    Batched on purpose: a month-long span can qualify on many dates at once, and
+    one message per date would flood WhatsApp and trip CallMeBot's rate limit.
+    """
+    if not hits:
+        return
+    lines = [f"{h['name']}: GBP {h['price']:g}" for h in hits[:20]]
+    if len(hits) > 20:
+        lines.append(f"...and {len(hits) - 20} more dates")
+    cheapest = min(hits, key=lambda h: h["price"])
     notify_whatsapp(cfg, (
-        f"\U0001f3ab Eurostar Snap deal\n"
-        f"{route['name']}\n"
-        f"GBP {price:g} (threshold {cfg['threshold_gbp']})\n"
-        f"Book: {url}"))
+        f"\U0001f3ab Eurostar Snap deal ({len(hits)} date"
+        f"{'s' if len(hits) != 1 else ''} at or below GBP {cfg['threshold_gbp']})\n"
+        + "\n".join(lines)
+        + f"\n\nCheapest: {cheapest['name']} GBP {cheapest['price']:g}\n"
+        f"Book: {cheapest['url']}"))
     on_mac = platform.system() == "Darwin"
     if on_mac and (cfg.get("notify") or {}).get("mac_alarm", True):
-        mac_alert(cfg, route, price, url, first_hit)
+        mac_alert(cfg, cheapest, cheapest["price"], cheapest["url"],
+                  any(h["first_hit"] for h in hits))
 
 
 def main():
@@ -235,37 +323,42 @@ def main():
             return True, False
         return gap >= realert_after, False
 
+    hits = []
+
     async def run():
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             for route in cfg["routes"]:
-                key = f"{route['origin']}-{route['destination']}-{route['outbound']}"
-                res = await check_route(browser, route)
-                if res["error"]:
-                    log(f"{route['name']}: ERROR {res['error']}")
-                    continue
-                price = res["price"]
-                log(f"{route['name']}: {res['raw']}"
-                    + (f"  (threshold £{threshold})" if price is not None else ""))
-                prev = state.get(key, {})
-                qualifies = price is not None and price <= threshold
-                if qualifies:
-                    fire, first_hit = should_alert(prev, price)
-                    if fire:
-                        log(f"  >>> DEAL £{price:g} <= £{threshold} — ALERT "
-                            f"({'first' if first_hit else 'repeat'})")
-                        alert(cfg, route, price, res["url"], first_hit)
-                        state[key] = {"alerted": True, "last_price": price,
-                                      "alerted_at": now.isoformat(timespec="seconds")}
+                results = await check_route(browser, route)
+                if not results:
+                    log(f"{route['name']}: nothing on sale in range yet")
+                for res in results:
+                    if res["error"]:
+                        log(f"{res['name']}: ERROR {res['error']}")
+                        continue
+                    key = f"{route['origin']}-{route['destination']}-{res['date']}"
+                    price = res["price"]
+                    log(f"{res['name']}: {res['raw']}"
+                        + (f"  (threshold £{threshold})" if price is not None else ""))
+                    prev = state.get(key, {})
+                    if price is not None and price <= threshold:
+                        fire, first_hit = should_alert(prev, price)
+                        if fire:
+                            log(f"  >>> DEAL £{price:g} <= £{threshold} — ALERT "
+                                f"({'first' if first_hit else 'repeat'})")
+                            hits.append({**res, "first_hit": first_hit})
+                            state[key] = {"alerted": True, "last_price": price,
+                                          "alerted_at": now.isoformat(timespec="seconds")}
+                        else:
+                            log(f"  >>> DEAL £{price:g} — already alerted, holding "
+                                f"(re-alert after {realert_after}min)")
+                            state[key] = prev
                     else:
-                        log(f"  >>> DEAL £{price:g} — already alerted, holding "
-                            f"(re-alert after {realert_after}min)")
-                        state[key] = prev
-                else:
-                    state[key] = {"alerted": False, "last_price": price}
+                        state[key] = {"alerted": False, "last_price": price}
             await browser.close()
 
     asyncio.run(run())
+    alert(cfg, hits)
     with open(STATE, "w") as f:
         json.dump(state, f, indent=2)
 

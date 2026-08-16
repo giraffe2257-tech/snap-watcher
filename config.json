@@ -17,28 +17,22 @@
   "default_interval_min": 0,
   "routes": [
     {
-      "name": "London to Paris 8/25",
+      "name": "London to Paris",
       "origin": "7015400",
       "destination": "8727100",
-      "outbound": "2026-08-25",
+      "outbound_from": "2026-09-04",
+      "outbound_to": "2026-09-30",
       "window_pref": "any",
-      "speak": "London to Paris, twenty fifth of August"
+      "speak": "London to Paris"
     },
     {
-      "name": "London to Paris 8/26",
-      "origin": "7015400",
-      "destination": "8727100",
-      "outbound": "2026-08-26",
-      "window_pref": "any",
-      "speak": "London to Paris, twenty sixth of August"
-    },
-    {
-      "name": "Paris to London 8/28 (afternoon pref)",
+      "name": "Paris to London",
       "origin": "8727100",
       "destination": "7015400",
-      "outbound": "2026-08-28",
-      "window_pref": "afternoon",
-      "speak": "Paris to London, twenty eighth of August, afternoon"
+      "outbound_from": "2026-09-04",
+      "outbound_to": "2026-09-30",
+      "window_pref": "any",
+      "speak": "Paris to London"
     }
   ]
 }
